@@ -187,7 +187,7 @@
         result(nil);
     }
     else if([@"startRingback" isEqualToString:call.method]){
-        [self startRingback:@"_BUNDLE_"];
+        [self startRingback:@"_DTMF_"];
         result(nil);
     }
     else if([@"stopRingback" isEqualToString:call.method]){
