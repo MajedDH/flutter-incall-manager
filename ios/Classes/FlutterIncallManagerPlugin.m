@@ -1,10 +1,12 @@
 #import "FlutterIncallManagerPlugin.h"
+#import "TGSineWaveToneGenerator.h"
 
 @implementation FlutterIncallManagerPlugin {
     FlutterMethodChannel *_methodChannel;
     FlutterEventSink _eventSink;
     FlutterEventChannel* _eventChannel;
-
+    TGSineWaveToneGenerator* _dtmfGenerator;
+    NSTimer* _ringbackTimer;
     id _registry;
     id _messenger;
     UIDevice *_currentDevice;
@@ -70,6 +72,8 @@
                       messenger:(NSObject<FlutterBinaryMessenger>*)messenger {
     _currentDevice = [UIDevice currentDevice];
     _audioSession = [AVAudioSession sharedInstance];
+    _dtmfGenerator = [[TGSineWaveToneGenerator alloc] initWithChannels:1];
+    _ringbackTimer=nil;
     _ringtone = nil;
     _ringback = nil;
     _busytone = nil;
@@ -417,49 +421,71 @@ ringbackUriType:(NSString *)ringbackUriType
     NSLog(@"FlutterInCallManager.setMicrophoneMute(): ios doesn't support setMicrophoneMute()");
 }
 
+- (void) playDTMF:(NSTimer *)timer
+{
+    _dtmfGenerator->_channels[0].frequency=400;
+    [_dtmfGenerator playForDuration:1];
+}
+
 - (void)startRingback:(NSString *)_ringbackUriType
 {
-    // you may rejected by apple when publish app if you use system sound instead of bundled sound.
-    NSLog(@"FlutterInCallManager.startRingback(): type=%@", _ringbackUriType);
-    
-    @try {
-        if (_ringback != nil) {
-            if ([_ringback isPlaying]) {
-                NSLog(@"FlutterInCallManager.startRingback(): is already playing");
-                return;
-            } else {
-                [self stopRingback];
-            }
+    // you may rejected by apple when publish app if you use system sound instead of bundled sound. 
+    if([_ringbackUriType isEqualToString:@"_DTMF_"])
+    {
+        if(_ringbackTimer==nil) {
+            _ringbackTimer =  [NSTimer scheduledTimerWithTimeInterval:5 target:self selector:@selector(playDTMF:) userInfo:nil repeats:YES];
+            _dtmfGenerator->_channels[0].frequency=400;
+            [_dtmfGenerator playForDuration:1];
         }
-        // ios don't have embedded DTMF tone generator. use system dtmf sound files.
-        NSString *ringbackUriType = [_ringbackUriType isEqualToString:@"_DTMF_"]
-        ? @"_DEFAULT_"
-        : _ringbackUriType;
-        NSURL *ringbackUri = [self getRingbackUri:ringbackUriType];
-        if (ringbackUri == nil) {
-            NSLog(@"FlutterInCallManager.startRingback(): no available media");
-            return;
-        }
-        //self.storeOriginalAudioSetup()
-        _ringback = [[AVAudioPlayer alloc] initWithContentsOfURL:ringbackUri error:nil];
-        _ringback.delegate = self;
-        _ringback.numberOfLoops = -1; // you need to stop it explicitly
-        [_ringback prepareToPlay];
+    } else {
+        NSLog(@"FlutterInCallManager.startRingback(): type=%@", _ringbackUriType);
         
-        //self.audioSessionSetCategory(self.incallAudioCategory, [.DefaultToSpeaker, .AllowBluetooth], #function)
-        [self audioSessionSetCategory:_incallAudioCategory
-                              options:0
+        @try {
+            if (_ringback != nil) {
+                if ([_ringback isPlaying]) {
+                    NSLog(@"FlutterInCallManager.startRingback(): is already playing");
+                    return;
+                } else {
+                    [self stopRingback];
+                }
+            }
+            // ios don't have embedded DTMF tone generator. use system dtmf sound files.
+            NSString *ringbackUriType = [_ringbackUriType isEqualToString:@"_DTMF_"]
+            ? @"_DEFAULT_"
+            : _ringbackUriType;
+            NSURL *ringbackUri = [self getRingbackUri:ringbackUriType];
+            if (ringbackUri == nil) {
+                NSLog(@"FlutterInCallManager.startRingback(): no available media");
+                return;
+            }
+            //self.storeOriginalAudioSetup()
+            _ringback = [[AVAudioPlayer alloc] initWithContentsOfURL:ringbackUri error:nil];
+            _ringback.delegate = self;
+            _ringback.numberOfLoops = -1; // you need to stop it explicitly
+            [_ringback prepareToPlay];
+            
+            //self.audioSessionSetCategory(self.incallAudioCategory, [.DefaultToSpeaker, .AllowBluetooth], #function)
+            [self audioSessionSetCategory:_incallAudioCategory
+                                  options:0
+                               callerMemo:NSStringFromSelector(_cmd)];
+            [self audioSessionSetMode:_incallAudioMode
                            callerMemo:NSStringFromSelector(_cmd)];
-        [self audioSessionSetMode:_incallAudioMode
-                       callerMemo:NSStringFromSelector(_cmd)];
-        [_ringback play];
-    } @catch (NSException *e) {
-        NSLog(@"FlutterInCallManager.startRingback(): caught error=%@", e.reason);
+            [_ringback play];
+        } @catch (NSException *e) {
+            NSLog(@"FlutterInCallManager.startRingback(): caught error=%@", e.reason);
+        }
     }
 }
 
 - (void) stopRingback
 {
+    if(_ringbackTimer!=nil){
+        
+        [_ringbackTimer invalidate];
+        _dtmfGenerator.stop;
+        _ringbackTimer = nil;
+    }
+    
     if (_ringback != nil) {
         NSLog(@"FlutterInCallManager.stopRingback()");
         [_ringback stop];
